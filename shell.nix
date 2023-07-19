@@ -34,6 +34,7 @@ let
 
   haskellDeps = ps: with ps; [
     base
+    BlogLiterately
     cassava
     lens
     microlens
@@ -56,6 +57,7 @@ pkgs.stdenv.mkDerivation {
 
   buildInputs = [
     pkgs.libintlOrEmpty
+    pkgs.lhs2tex
     (pkgs.myHaskellPackages.ghcWithPackages haskellDeps)
     pkgs.darwin.apple_sdk.frameworks.Cocoa
   ];
