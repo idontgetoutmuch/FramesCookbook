@@ -1,5 +1,12 @@
 Maybe this one has some inspiring things we could add: https://pandas.pydata.org/docs/user_guide/cookbook.html ?
 
+Also
+https://rstudio-education.github.io/tidyverse-cookbook/transform-tables.html#rename-columns
+and not forgetting
+https://github.com/acowley/Frames/blob/master/demo/Tutorial.hs
+http://acowley.github.io/Frames/#org18829cb
+https://github.com/acowley/Frames/issues/170
+
 chatGPT's answer for the 100 most important operations on dataframes: :wink:
 Working with data in a DataFrame can involve numerous operations, and the importance of each operation can vary depending on the specific use case and data analysis requirements. However, I can provide a list of 100 essential DataFrame operations that cover a wide range of common tasks. These operations are typically performed in data manipulation, exploration, cleaning, and analysis. Keep in mind that this list is not exhaustive, but it should give you a solid foundation to work with DataFrame data:
 
