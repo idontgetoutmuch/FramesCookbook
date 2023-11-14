@@ -35,6 +35,7 @@ Introduction
 > import Data.Vinyl.Lens
 > import Data.Vinyl.Derived
 > import Data.Vinyl.Recursive (rpureConstrained)
+> import qualified Control.Foldl as Foldl
 > import Lens.Micro
 > import GHC.TypeLits hiding (Nat)
 
@@ -47,6 +48,22 @@ Introduction
 
 Frames Cookbook
 ===============
+
+> tableTypes "Benchmarks" "v1.2-proposal.csv"
+
+> loadNewBenchmarks :: IO (Frame Benchmarks)
+> loadNewBenchmarks = inCoreAoS (readTable "v1.2-proposal.csv")
+
+
+Summarising Data
+----------------
+
+> describe :: Foldl.Fold Benchmarks (Int, Double, Maybe Double, Maybe Double, Double)
+> describe = (,,,,) <$> (Foldl.handles mean) Foldl.genericLength
+>                   <*> (Foldl.handles mean) Foldl.mean
+>                   <*> (Foldl.handles mean) Foldl.maximum
+>                   <*> (Foldl.handles mean) Foldl.minimum
+>                   <*> (Foldl.handles mean) Foldl.std
 
 Renaming a Column
 -----------------
