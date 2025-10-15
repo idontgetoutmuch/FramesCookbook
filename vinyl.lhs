@@ -35,7 +35,8 @@ Introduction
 > import Data.Vinyl.Lens
 > import Data.Vinyl.Derived
 > import Data.Vinyl.Recursive (rpureConstrained)
-> import qualified Control.Foldl as Foldl
+> import qualified Control.Foldl as FL
+> import           Control.Foldl (fold)
 > import Lens.Micro
 > import GHC.TypeLits hiding (Nat)
 
@@ -45,6 +46,10 @@ Introduction
 > import           Data.Vinyl.TypeLevel as V
 > import qualified Data.Vinyl as V
 
+> import qualified Data.List as L
+> import qualified Data.Map as Map
+> import           Data.Map (Map)
+> import qualified Data.Foldable as F
 
 Frames Cookbook
 ===============
@@ -54,16 +59,23 @@ Frames Cookbook
 > loadNewBenchmarks :: IO (Frame Benchmarks)
 > loadNewBenchmarks = inCoreAoS (readTable "v1.2-proposal.csv")
 
+> tableTypes "Purchases" "purchases.csv"
+
+> declareColumn "Total" ''Int
+> declareColumn "Average" ''Double
+
+> loadBenchmarks :: IO (Frame Purchases)
+> loadBenchmarks = inCoreAoS (readTable "purchases.csv")
 
 Summarising Data
 ----------------
 
-> describe :: Foldl.Fold Benchmarks (Int, Double, Maybe Double, Maybe Double, Double)
-> describe = (,,,,) <$> (Foldl.handles mean) Foldl.genericLength
->                   <*> (Foldl.handles mean) Foldl.mean
->                   <*> (Foldl.handles mean) Foldl.maximum
->                   <*> (Foldl.handles mean) Foldl.minimum
->                   <*> (Foldl.handles mean) Foldl.std
+> describe :: FL.Fold Benchmarks (Int, Double, Maybe Double, Maybe Double, Double)
+> describe = (,,,,) <$> (FL.handles mean) FL.genericLength
+>                   <*> (FL.handles mean) FL.mean
+>                   <*> (FL.handles mean) FL.maximum
+>                   <*> (FL.handles mean) FL.minimum
+>                   <*> (FL.handles mean) FL.std
 
 Renaming a Column
 -----------------
@@ -96,6 +108,176 @@ Renaming a Column
 
     [ghci]
     :t rec2
+
+A Simple Example
+----------------
+
+
+How much do we sell? Let’s take the total sum!
+
+    [ghci]
+    ms <- loadBenchmarks
+    putStrLn $ show $ FL.fold FL.sum (fmap (^. amount) ms)
+
+Ah, they wanted it by country...
+
+We need a few extensions which we could hide in a config file but are
+shown here so it's explicit which ones are needed.
+
+    [ghci]
+    :set -XScopedTypeVariables
+    :set -XTypeApplications
+    :set -XDataKinds
+
+R has a concept of grouped frames (I hope I got the terminology
+correct). We can mimic this in Haskell, grouping by `Country`:
+
+    [ghci]
+    let groupedByCountry = FL.fold (FL.groupBy (rcast @'[Country]) frame) ms
+
+It being Haskell we can ask what type this grouping operation has produced.
+
+    [ghci]
+    :t groupedByCountry
+
+By remembering the type synonyms for `Record` and `Frame` we see that
+a "grouped frame" in Haskell is actually a map from a `Record` to a
+`Frame`.
+
+    [ghci]
+    :t groupedByCountry :: Map (Record '[Country]) (Frame Purchases)
+
+This means we have to map functions over the `Map`. Here we pull out
+the amount and then sum.
+
+    [ghci]
+    let countrySum = Map.map (\ns -> (FL.fold FL.sum (fmap (^. amount) ns))) groupedByCountry
+
+Again we can check the type of the result.
+
+    [ghci]
+    :t countrySum
+
+We can create a new `Frame`. Since `country` pulls out something of type `Text` and the sums for each country are of type `Int`, we have to be explicit that want the types to be actually `Country` and `Total`.
+
+    [ghci]
+    :i Country
+    :i Total
+    let summary :: Frame (Record '[Country, Total]) = toFrame $ Map.mapWithKey (\k x -> (k ^. country) &: x &: V.RNil) countrySum
+
+Finally we can admire our handiwork by using a type, `OrdinaryFrame`
+that prints out values neatly.
+
+    [ghci]
+    putStrLn $ show $ OrdinaryFrame summary
+
+Whatever
+
+    [ghci]
+    OrdinaryFrame $ toFrame $ Map.mapWithKey (\k x -> ((k ^. country)) &: (x) &: V.RNil :: Record '[Country, Total]) $ Map.map (\ns -> (FL.fold FL.sum (fmap (^. amount) ns))) $ FL.fold (FL.groupBy (rcast @'[Country]) frame) ms
+
+And I guess I should deduct the discount.
+
+    [ghci]
+    let countrySumDscnt = Map.map (FL.fold (FL.premap (\r -> r ^. amount - r ^. discount) FL.sum)) groupedByCountry
+    summaryDscnt :: Frame (Record '[Country, Total]) = toFrame $ Map.mapWithKey (\k x -> (k ^. country ) &: x &: V.RNil) countrySumDscnt
+    putStrLn $ show $ OrdinaryFrame summaryDscnt
+
+Let’s remove everything 10x larger than the median using the median within each country.
+
+    [ghci]
+    :set -XFlexibleContexts
+    let countryMedian = Map.map (\ns -> (FL.fold median (fmap fromIntegral $ fmap (^. amount) ns))) groupedByCountry
+    let f df m = filterFrame (\r -> fromIntegral (r ^. amount) <= 10.0 * m) df
+    let filteredGroupByCountry = Map.map (uncurry f) (Map.intersectionWith (,) groupedByCountry countryMedian)
+    let countrySumDscnt = Map.map (FL.fold (FL.premap (\r -> r ^. amount - r ^. discount) FL.sum)) filteredGroupByCountry
+    let summaryDscnt :: Frame (Record '[Country, Total]) = toFrame $ Map.mapWithKey (\k x -> (k ^. country ) &: x &: V.RNil) countrySumDscnt
+    putStrLn $ show $ OrdinaryFrame summaryDscnt
+
+> rhead :: Show a => Frame a -> IO ()
+> rhead  = \ms -> mapM_ print (((take 6) . F.toList) ms)
+
+> frame :: FL.Fold a (Frame a)
+> frame = FL.Fold (\x a -> x . (Frame 1 (const a) <>)) id ($ mempty)
+
+> median :: (Fractional a, Ord a) => FL.Fold a a
+> median = FL.Fold (flip L.insert) [] f
+>   where
+>     f [] = error ""
+>     f xs | odd l = xs !! m
+>          | otherwise = (xs !! (m - 1) + xs !! m) / 2
+>       where l = length xs
+>             m = l `div` 2
+
+> data GroupedFrame k t b = GroupedFrame (Map k (t b))
+
+> instance (Show a, Foldable t) => Show (GroupedFrame k t a) where
+>   show (GroupedFrame x) = L.intercalate "\n" $ map (L.intercalate "\n") $ fmap (fmap show) $
+>                           fmap (fold FL.list) $
+>                           map F.toList $ F.toList $ Map.elems x
+
+> data OrdinaryFrame t b = OrdinaryFrame (t b)
+
+> instance (Show b, Foldable t) => Show (OrdinaryFrame t b) where
+>   show (OrdinaryFrame x) = L.intercalate "\n" $ fmap show $ fold FL.list x
+
+> type SummaryPurchases = '["Country" :-> Text, "Total" :-> Int]
+
+> test :: IO ()
+> test = do
+>   ms <- loadBenchmarks
+
+How much do we sell? Let’s take the total sum!
+
+>   putStrLn $ show $ FL.fold FL.sum ((^. amount) <$> ms)
+
+Ah, they wanted it by country...
+
+>   let groupedByCountry :: Map (Record '[Country]) (Frame Purchases)
+>       groupedByCountry = FL.fold (FL.groupBy (rcast @'[Country]) frame) ms
+
+>   putStrLn $ show $ GroupedFrame groupedByCountry
+
+>   let countrySum :: Map (Record '[Country]) Int
+>       countrySum = Map.map (\ns -> (FL.fold FL.sum (fmap (^. amount) ns))) groupedByCountry
+>   let summary :: Frame (Record '[Country, Total])
+>       summary = toFrame $ Map.mapWithKey (\k x -> (k ^. country) &: x &: V.RNil) countrySum
+
+>   putStrLn $ show $ OrdinaryFrame summary
+
+And I guess I should deduct the discount.
+
+>   let countrySumDscnt :: Map (Record '[Country]) Int
+>       countrySumDscnt =
+>         Map.map (FL.fold (FL.premap (\r -> r ^. amount - r ^. discount) FL.sum)) groupedByCountry
+
+>   let summaryDscnt :: Frame (Record '[Country, Total])
+>       summaryDscnt = toFrame $ Map.mapWithKey (\k x -> (k ^. country ) &: x &: V.RNil) countrySumDscnt
+
+>   putStrLn $ show $ OrdinaryFrame summaryDscnt
+
+Let’s remove everything 10x larger than the median using the median within each country.
+
+>   let countryMedian :: Map (Record '[Country]) Double
+>       countryMedian =
+>         Map.map (\ns -> (FL.fold median (fmap fromIntegral $ fmap (^. amount) ns))) groupedByCountry
+
+>   let filteredGroupByCountry :: Map (Record '[Country]) (Frame Purchases)
+>       filteredGroupByCountry = Map.map (uncurry f) (Map.intersectionWith (,) groupedByCountry countryMedian)
+>         where
+>           f :: Frame Purchases -> Double -> Frame Purchases
+>           f df m = filterFrame (\r -> fromIntegral (r ^. amount) <= 10.0 * m) df
+
+>   putStrLn $ show $ GroupedFrame filteredGroupByCountry
+
+>   let countrySumDscnt :: Map (Record '[Country]) Int
+>       countrySumDscnt =
+>         Map.map (FL.fold (FL.premap (\r -> r ^. amount - r ^. discount) FL.sum)) filteredGroupByCountry
+
+>   let summaryDscnt :: Frame (Record '[Country, Total])
+>       summaryDscnt = toFrame $ Map.mapWithKey (\k x -> (k ^. country ) &: x &: V.RNil) countrySumDscnt
+
+>   putStrLn $ show $ OrdinaryFrame summaryDscnt
 
 To Be Explained
 ---------------
